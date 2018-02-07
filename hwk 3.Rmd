@@ -1,0 +1,365 @@
+---
+title: "Statistical Methods for Data Mining Homework 3"
+instructor: Jie Yang
+output: html_document
+author: Cloie McClellan
+---
+
+Question 1 asked us to read section 3.6 and 3.8 of The *Elements of Statistical Learning*, which was an introduction to supervised learning.
+
+Question 2 asks us to compare 6 types of regression for a set of prostate cancer data: mean training response, full linear model,reduced linear model, Ridge, LASSO, and LARS. Here is the description of the data from page 49:
+
+"The data for this example come from a study by Stamey et al. (1989). They
+examined the correlation between the level of prostate-specific antigen and
+a number of clinical measures in men who were about to receive a radical
+prostatectomy. The variables are log cancer volume (lcavol), log prostate
+weight (lweight), age, log of the amount of benign prostatic hyperplasia
+(lbph), seminal vesicle invasion (svi), log of capsular penetration (lcp),
+Gleason score (gleason), and percent of Gleason scores 4 or 5 (pgg45)."
+
+First, we load the appropriate packages and data:
+```{r}
+library("ElemStatLearn")
+library(glmnet)
+library("pls")
+data(prostate)
+str( prostate )
+
+
+```
+
+Next, we create a new split of the data into train and test sets of size 67 and 30 respectively. Once the split is done, we will normalize the sets.
+```{r}
+set.seed(101)  
+sample <- sample.int(n = 97, size = 67, replace = F)
+train <- prostate[sample, ][,1:9]
+test  <- prostate[-sample, ][,1:9]
+
+trainst <- train
+for(i in 1:8){
+trainst[,i] <- trainst[,i] - mean(prostate[,i]);
+trainst[,i] <- trainst[,i]/sd(prostate[,i]);
+}
+
+testst<- test
+for(i in 1:8){
+testst[,i] <- testst[,i] - mean(prostate[,i]);
+testst[,i] <- testst[,i]/sd(prostate[,i]);
+}
+```
+
+Now, we can run all of the methods on this split and compare their results. 
+
+```{r, results="hide"}
+#full linear model
+fitls <- lm( lpsa ~ lcavol+lweight+age+lbph+svi+lcp+gleason+pgg45, data=trainst )
+summary(fitls)
+
+test.fitls=predict(fitls, newdata=testst)  
+# mean (absolute) prediction error
+ma11=mean(abs(test[,9]-test.fitls))                
+# mean (squared) prediction error
+ms11=mean((test[,9]-test.fitls)^2)                 
+# standard error of mean (squared) prediction error
+sd11=sd((test[,9]-test.fitls)^2)/sqrt(30)    
+
+
+#Fit and find errors for the reducted linear model
+fitlsr <- lm( lpsa ~ lcavol+lweight+lbph+svi, data=trainst )
+summary(fitlsr)
+
+# mean prediction error based on reduced model
+test.fitlsr=predict(fitlsr, newdata=testst)  
+# mean (absolute) prediction error
+ma12=mean(abs(test[,9]-test.fitlsr))                
+# mean (squared) prediction error
+ms12=mean((test[,9]-test.fitlsr)^2)                 
+# standard error of mean (squared) prediction error
+sd12=sd((test[,9]-test.fitlsr)^2)/sqrt(30) 
+
+
+# Principal Components Regression
+pcr.fit=pcr(lpsa~., data=trainst, scale=F, validation="CV", segments=10)
+summary(pcr.fit)
+itemp=which.min(pcr.fit$validation$PRESS)     
+itemp.mean=pcr.fit$validation$PRESS[itemp]/67 
+mean((pcr.fit$validation$pred[,,itemp]-trainst[,9])^2) 
+itemp.sd=sd((pcr.fit$validation$pred[,,itemp]-trainst[,9])^2)/sqrt(67)   
+k.pcr = min((1:pcr.fit$validation$ncomp)[pcr.fit$validation$PRESS/67 < itemp.mean+itemp.sd])  
+pcr.fit$coefficients[,,k.pcr]   
+
+# estimating mean prediction error
+test.pcr=predict(pcr.fit,newdata=as.matrix(testst[,1:8]), ncomp=k.pcr)
+# mean (absolute) prediction error
+ma13=mean(abs(test[,9]-test.pcr))                
+# mean (squared) prediction error
+ms13=mean((test[,9]-test.pcr)^2)                
+# standard error of mean (squared) prediction error
+sd13=sd((test[,9]-test.pcr)^2)/sqrt(30)         
+
+# Partial Least Squares using R
+#### Section 3.5.2 in ESL book, or Section 6.3.2 in ISL book (An Introduction to Statistical Learning: with Applications in R)
+plsr.fit=plsr(lpsa~., data=trainst, scale=F, validation="CV", segments=10)
+summary(plsr.fit)
+itemp=which.min(plsr.fit$validation$PRESS)    
+itemp.mean=plsr.fit$validation$PRESS[itemp]/67 
+mean((plsr.fit$validation$pred[,,itemp]-trainst[,9])^2) 
+itemp.sd=sd((plsr.fit$validation$pred[,,itemp]-trainst[,9])^2)/sqrt(67)   
+k.plsr = min((1:plsr.fit$validation$ncomp)[plsr.fit$validation$PRESS/67 < itemp.mean+itemp.sd])  
+plsr.fit$coefficients[,,k.plsr]   
+
+# estimating mean prediction error
+test.plsr=predict(plsr.fit,as.matrix(testst[,1:8]),ncomp=k.plsr)
+# mean (absolute) prediction error
+ma14=mean(abs(test[,9]-test.plsr))               
+# mean (squared) prediction error
+ms14=mean((test[,9]-test.plsr)^2)                 
+# standard error of mean (squared) prediction error
+sd14=sd((test[,9]-test.plsr)^2)/sqrt(30)          
+
+
+
+```
+To compare the results, we will look at the mean absolute error and the mean squared error for all the methods. 
+
+```{r}
+ma11
+ma12
+ma13
+ma14
+
+ms11
+ms12
+ms13
+ms14
+
+```
+
+We can see from these that the Partial Least Squares appears to perform best in both error measurements. However, we do not know if these numbers are different enough to constitute a statistically significant difference in performance. Further, even if we did, it would be impossible to tell if the result was general or specific to this train/test split. So, we will repeat the process for 100 splits, which will give us enough information to compare the methods. 
+
+First, we will run the regressions on the 100 different splits and store the erros. 
+
+
+```{r, results="hide", fig.keep="none"}
+
+sink(tempfile())
+
+set.seed(1075)
+ma1=c()
+ms1=c()
+ma2=c()
+ms2=c()
+ma3=c()
+ms3=c()
+ma4=c()
+ms4=c()
+
+
+for(j in 1:100){
+sample <- sample.int(n = 97, size = 67, replace = F)
+train <- prostate[sample, ][,1:9]
+test  <- prostate[-sample, ][,1:9]
+
+trainst <- train
+for(i in 1:8){
+trainst[,i] <- trainst[,i] - mean(prostate[,i]);
+trainst[,i] <- trainst[,i]/sd(prostate[,i]);
+ }
+
+testst<- test
+for(i in 1:8){
+testst[,i] <- testst[,i] - mean(prostate[,i]);
+testst[,i] <- testst[,i]/sd(prostate[,i]);
+}
+
+
+fitls <- lm( lpsa ~ lcavol+lweight+age+lbph+svi+lcp+gleason+pgg45, data=trainst )
+summary(fitls)
+
+test.fitls=predict(fitls, newdata=testst)  
+# mean (absolute) prediction error
+ma1[j]=mean(abs(test[,9]-test.fitls))                
+# mean (squared) prediction error
+ms1[j]=mean((test[,9]-test.fitls)^2)  
+
+fitlsr <- lm( lpsa ~ lcavol+lweight+lbph+svi, data=trainst )
+summary(fitlsr)
+
+# mean prediction error based on reduced model
+test.fitlsr=predict(fitlsr, newdata=testst)  
+# mean (absolute) prediction error
+ma2[j]=mean(abs(test[,9]-test.fitlsr))                
+# mean (squared) prediction error
+ms2[j]=mean((test[,9]-test.fitlsr)^2)    
+
+
+#### Principal Components Regression
+pcr.fit=pcr(lpsa~., data=trainst, scale=F, validation="CV", segments=10)
+summary(pcr.fit)
+itemp=which.min(pcr.fit$validation$PRESS)    
+itemp.mean=pcr.fit$validation$PRESS[itemp]/67 
+mean((pcr.fit$validation$pred[,,itemp]-trainst[,9])^2) 
+itemp.sd=sd((pcr.fit$validation$pred[,,itemp]-trainst[,9])^2)/sqrt(67)   
+k.pcr = min((1:pcr.fit$validation$ncomp)[pcr.fit$validation$PRESS/67 < itemp.mean+itemp.sd])  
+pcr.fit$coefficients[,,k.pcr]   
+
+# estimating mean prediction error
+test.pcr=predict(pcr.fit,newdata=as.matrix(testst[,1:8]), ncomp=k.pcr)
+# mean (absolute) prediction error
+ma3[j]=mean(abs(test[,9]-test.pcr))                
+# mean (squared) prediction error
+ms3[j]=mean((test[,9]-test.pcr)^2)                 
+# standard error of mean (squared) prediction error
+sd((test[,9]-test.pcr)^2)/sqrt(30)          
+
+#### Partial Least Squares using R
+#### Section 3.5.2 in ESL book, or Section 6.3.2 in ISL book (An Introduction to Statistical Learning: with Applications in R)
+plsr.fit=plsr(lpsa~., data=trainst, scale=F, validation="CV", segments=10)
+summary(plsr.fit)
+itemp=which.min(plsr.fit$validation$PRESS)     
+itemp.mean=plsr.fit$validation$PRESS[itemp]/67 
+mean((plsr.fit$validation$pred[,,itemp]-trainst[,9])^2) 
+itemp.sd=sd((plsr.fit$validation$pred[,,itemp]-trainst[,9])^2)/sqrt(67)   
+k.plsr = min((1:plsr.fit$validation$ncomp)[plsr.fit$validation$PRESS/67 < itemp.mean+itemp.sd])  
+plsr.fit$coefficients[,,k.plsr]   
+
+# estimating mean prediction error
+test.plsr=predict(plsr.fit,as.matrix(testst[,1:8]),ncomp=k.plsr)
+# mean (absolute) prediction error
+ma4[j]=mean(abs(test[,9]-test.plsr))               
+# mean (squared) prediction error
+ms4[j]=mean((test[,9]-test.plsr)^2)                
+# standard error of mean (squared) prediction error
+sd((test[,9]-test.plsr)^2)/sqrt(30)          
+
+
+}
+
+
+sink()
+
+```
+Now, we can actually look at the mean difference between the errors and test if they are significant. First, we will look at the absolute error.
+
+```{r}
+Data <-  as.data.frame(cbind(ma1,ma2,ma3,ma4))
+names(Data) <-c("FL_abs", "RL_abs", "PCR_abs", "PLS_abs")
+
+Results<- NULL
+Results<- as.data.frame(Results)
+Means<-NULL
+Means<-as.data.frame(Means)
+
+for (i in 1:4){
+  
+  Results[i,1]<-names(Data)[i]
+  Means[i,1]<-names(Data)[i]
+  for(j in 1:4)
+  {
+    Results[i,j+1]<-t.test(Data[,i],Data[,j], paired=TRUE)$p.value
+    Means[i,j+1]<-t.test(Data[,i],Data[,j], paired=TRUE)$estimate
+    
+    
+  }  
+  
+}
+options(scipen=20)
+names(Results)<- c("", names(Data))
+Results
+names(Means)<-c("", names(Data))
+Means
+```
+So, we can see that the full linear model and the reduced linear model are not significantly different from one another, but they are both better than the other two models. Partial least squares performs better than principal component regression. This shows that the result above was actually sensitive to the particular split we were considering. 
+
+Now, we can look at the mean squared error, which is more often used for evaluating a model. 
+
+```{r}
+
+Data2 <-  as.data.frame(cbind(ms1,ms2,ms3,ms4))
+names(Data2) <-c("FL_sq", "RL_sq", "PCR_sq", "PLS_sq")
+
+Results2<- NULL
+Results2<- as.data.frame(Results2)
+
+Means2<-NULL
+Means2<-as.data.frame(Means2)
+
+for (i in 1:4){
+  
+  Results2[i,1]<-names(Data2)[i]
+  Means2[i,1]<-names(Data2)[i]
+  for(j in 1:4)
+  {
+    Results2[i,j+1]<-t.test(Data2[,i],Data2[,j], paired=TRUE)$p.value
+     Means2[i,j+1]<-t.test(Data2[,i],Data2[,j], paired=TRUE)$estimate
+    
+    
+  }  
+  
+}
+options(scipen=20)
+names(Results2)<- c("", names(Data2))
+Results2
+names(Means2)<-c("", names(Data2))
+Means2
+
+```
+
+Here, we can see that all of the models are significantly different from one another. The reduced linear model performs the best, followed by the full linear model, partial least squares, and then principal component regression. So, we see that on average there is a difference in how the models perform. However, just looking at the average can also present problems. So, we might want to consider how often each of the models performs better than the others. 
+
+```{r}
+Count<- NULL
+Count<- matrix(0, ncol=5,nrow=5)
+
+for (i in 1:4){
+  
+  Count[i+1,1]<-names(Data)[i]
+  Count[1,i+1]<-names(Data)[i]
+  for(j in 1:4)
+  {
+    for(k in 1:100){
+    if(Data[k,i]<Data[k,j])
+      {Count[i+1,j+1]=as.numeric(Count[i+1,j+1])+1}
+    
+    
+  }
+ }  
+  
+}
+
+Count
+
+```
+
+So, here wwe see that even the worst performing model sometimes comes out on top. PCR performed the worst in absolute error, but it still performs bett than each of the other models at least 13 times. So, we can see that the results are very sensitive to the exact split of the data. 
+
+
+
+```{r}
+Count2<- NULL
+Count2<- matrix(0, ncol=5,nrow=5)
+
+for (i in 1:4){
+  
+  Count2[i+1,1]<-names(Data2)[i]
+  Count2[1,i+1]<-names(Data2)[i]
+  for(j in 1:4)
+  {
+    for(k in 1:100){
+    if(Data2[k,i]<Data2[k,j])
+      {Count2[i+1,j+1]=as.numeric(Count2[i+1,j+1])+1}
+    
+    
+  }
+ }  
+  
+}
+
+Count2
+
+```
+
+The results are even less clear when we look at the mean squared error. All of the models are performing better than the others at least some of the time. The strongest difference is the reduced model beating PCR 89 times, which still leaves 10 percent of the results skewing the other direction. Thus, we can see why cross validation is important. 
+
+Even though PCR and PLS didn't appear to work particularly well for this data, we do not want to completely disregard them. This data set may not have presented the elements for which they work well. Those methods prioritize variables with high variance, and, in particular, work well at dealing with data sets where either two variables are strongly correlated or where there are more variables than observations. 
+
