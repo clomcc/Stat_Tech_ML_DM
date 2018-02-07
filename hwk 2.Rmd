@@ -1,0 +1,429 @@
+---
+title: "Statistical Methods for Data Mining Homework 2"
+instructor: Jie Yang
+output: html_document
+author: Cloie McClellan
+---
+
+Question 1 asked us to read section 3.3 of The *Elements of Statistical Learning*, which was an introduction to supervised learning.
+
+Question 2 asks us to compare 6 types of regression for a set of prostate cancer data: mean training response, full linear model,reduced linear model, Ridge, LASSO, and LARS. Here is the description of the data from page 49:
+
+"The data for this example come from a study by Stamey et al. (1989). They
+examined the correlation between the level of prostate-specific antigen and
+a number of clinical measures in men who were about to receive a radical
+prostatectomy. The variables are log cancer volume (lcavol), log prostate
+weight (lweight), age, log of the amount of benign prostatic hyperplasia
+(lbph), seminal vesicle invasion (svi), log of capsular penetration (lcp),
+Gleason score (gleason), and percent of Gleason scores 4 or 5 (pgg45)."
+
+First, we load the appropriate packages and data:
+```{r}
+library("ElemStatLearn")
+library(glmnet)
+library(lasso2)
+library(lars)
+data(prostate)
+str( prostate )
+
+
+```
+
+Next, we create a new split of the data into train and test sets of size 67 and 30 respectively. Once the split is done, we will normalize the sets.
+```{r}
+set.seed(101)  
+sample <- sample.int(n = 97, size = 67, replace = F)
+train <- prostate[sample, ]
+test  <- prostate[-sample, ]
+
+trainst <- train
+for(i in 1:8){
+trainst[,i] <- trainst[,i] - mean(prostate[,i]);
+trainst[,i] <- trainst[,i]/sd(prostate[,i]);
+}
+
+testst<- test
+for(i in 1:8){
+testst[,i] <- testst[,i] - mean(prostate[,i]);
+testst[,i] <- testst[,i]/sd(prostate[,i]);
+}
+```
+
+
+Now, we can run all of the methods on this split and compare their results. 
+
+```{r, results="hide"}
+#First, we calculate the mean testing error
+mean(trainst[,9])     
+#mean (absolute) prediction error
+ma11=mean(abs(testst[,9]-mean(trainst[,9])))  
+#mean (squared) prediction error
+ms11=mean((testst[,9]-mean(trainst[,9]))^2)   
+# standard error of mean (squared) prediction error
+sd11=sd((testst[,9]-mean(trainst[,9]))^2)/sqrt(30) 
+
+#Next we fit and find errors for the full linear model
+fitls <- lm( lpsa ~ lcavol+lweight+age+lbph+svi+lcp+gleason+pgg45, data=trainst )
+summary(fitls)
+
+test.fitls=predict(fitls, newdata=testst)  
+# mean (absolute) prediction error
+ma12=mean(abs(test[,9]-test.fitls))                
+# mean (squared) prediction error
+ms12=mean((test[,9]-test.fitls)^2)                 
+# standard error of mean (squared) prediction error
+sd12=sd((test[,9]-test.fitls)^2)/sqrt(30)    
+
+
+#Fit and find errors for the reducted linear model
+fitlsr <- lm( lpsa ~ lcavol+lweight+lbph+svi, data=trainst )
+summary(fitlsr)
+
+# mean prediction error based on reduced model
+test.fitlsr=predict(fitlsr, newdata=testst)  
+# mean (absolute) prediction error
+ma13=mean(abs(test[,9]-test.fitlsr))                
+# mean (squared) prediction error
+ms13=mean((test[,9]-test.fitlsr)^2)                 
+# standard error of mean (squared) prediction error
+sd13=sd((test[,9]-test.fitlsr)^2)/sqrt(30)          
+
+#Fit and find errors for the ridge model
+## use "simple.ridge" in this package
+prostate.ridge <- simple.ridge(trainst[,1:8], trainst[,9], df=seq(1,8,by=0.5) )
+
+
+## use glmnet in package glmnet
+# use 10-fold cross-validation to choose best lambda
+set.seed(331)
+cv.out=cv.glmnet(x=as.matrix(trainst[,1:8]), y=as.numeric(trainst[,9]), nfolds=10, alpha=0, standardize=F)
+
+# the best lambda chosen by 10-fold cross-validation
+lambda.10fold=cv.out$lambda.1s   
+
+# apply Ridge regression with chosen lambda
+fitridge=glmnet(x=as.matrix(trainst[,1:8]),y=as.numeric(trainst[,9]),alpha=0,lambda=lambda.10fold,standardize=F,thresh=1e-12)
+# fitted coefficients
+fitridge$a0   
+fitridge$beta
+
+
+# estimating mean prediction error
+test.ridge=predict(fitridge,newx=as.matrix(testst[,1:8]))
+# mean (absolute) prediction error
+ma14=mean(abs(test[,9]-test.ridge))               
+# mean (squared) prediction errors
+ms14=mean((test[,9]-test.ridge)^2)                 
+# standard error of mean (squared) prediction error
+sd14=sd((test[,9]-test.ridge)^2)/sqrt(30)          
+
+
+
+
+## use glmnet in package glmnet
+# use 10-fold cross-validation to choose best lambda
+set.seed(321)
+cv.out=cv.glmnet(x=as.matrix(train[,1:8]), y=as.numeric(train[,9]), nfolds=10, alpha=1)
+# the best lambda chosen by 10-fold cross-validation
+lambda.10fold=cv.out$lambda.1s   
+
+# apply Lasso with chosen lambda
+fitlasso=glmnet(x=as.matrix(trainst[,1:8]),y=as.numeric(trainst[,9]),alpha=1,lambda=lambda.10fold,standardize=F,thresh=1e-12)
+# fitted coefficients
+fitlasso$a0 
+fitlasso$beta
+
+
+# estimating mean prediction error
+test.lasso=predict(fitlasso,newx=as.matrix(testst[,1:8]))
+# mean (absolute) prediction error
+ma15=mean(abs(test[,9]-test.lasso))                
+# mean (squared) prediction error
+ms15=mean((test[,9]-test.lasso)^2)                 
+# standard error of mean (squared) prediction error
+sd15=sd((test[,9]-test.lasso)^2)/sqrt(30)          
+
+## Section 3.4.4: LAR
+
+prostate.lar <- lars(x=as.matrix(trainst[,1:8]), y=as.numeric(trainst[,9]), type="lar", trace=TRUE, normalize=F)
+
+# choose k using 10-fold cross-validation
+set.seed(32)   # initial random seed for 10-fold CV
+cv.out <- cv.lars(x=as.matrix(trainst[,1:8]), y=as.numeric(trainst[,9]), K=10, plot.it=F, type="lar", trace=TRUE, normalize=F)
+itemp=which.min(cv.out$cv) # 6
+k.lars = min(cv.out$index[cv.out$cv < cv.out$cv[itemp]+cv.out$cv.error[itemp]])  # the chosen k = 6
+  
+
+# estimating mean prediction error
+test.lars=predict(prostate.lar, newx=as.matrix(testst[,1:8]), s=k.lars, type="fit", mode=cv.out$mode)$fit
+# mean (absolute) prediction error
+ma16=mean(abs(test[,9]-test.lars))                
+# mean (squared) prediction error
+ms16=mean((test[,9]-test.lars)^2)                 
+# standard error of mean (squared) prediction error
+sd16=sd((test[,9]-test.lars)^2)/sqrt(30)          
+
+
+```
+
+
+
+
+
+```{r}
+ma11
+ma12
+ma13
+ma14
+ma15
+ma16
+ms11
+ms12
+ms13
+ms14
+ms15
+ms16
+```
+
+So, looking at these results, the reduced linear model seems to perform best in absolute error and Ridge in squared error. However, simply looking at the numbers for a single train/test split is not sufficient. The result may be unique to this split or the differences may not actually be significant different than random error would cause. So, for a more robust result, we must run the procedure many times and test the significance of the differences. 
+
+
+```{r, results="hide"}
+set.seed(102)
+ma1=c()
+ms1=c()
+ma2=c()
+ms2=c()
+ma3=c()
+ms3=c()
+ma4=c()
+ms4=c()
+ma5=c()
+ms5=c()
+ma6=c()
+ms6=c()
+
+for(j in 1:100){
+sample <- sample.int(n = 97, size = 67, replace = F)
+train <- prostate[sample, ]
+test  <- prostate[-sample, ]
+
+trainst <- train
+for(i in 1:8){
+trainst[,i] <- trainst[,i] - mean(prostate[,i]);
+trainst[,i] <- trainst[,i]/sd(prostate[,i]);
+}
+
+testst<- test
+for(i in 1:8){
+testst[,i] <- testst[,i] - mean(prostate[,i]);
+testst[,i] <- testst[,i]/sd(prostate[,i]);
+}
+
+mean(trainst[,9])     
+#mean (absolute) prediction error
+ma1[j]=mean(abs(testst[,9]-mean(trainst[,9])))  
+#mean (squared) prediction error
+ms1[j]=mean((testst[,9]-mean(trainst[,9]))^2)  
+
+fitls <- lm( lpsa ~ lcavol+lweight+age+lbph+svi+lcp+gleason+pgg45, data=trainst )
+summary(fitls)
+
+test.fitls=predict(fitls, newdata=testst)  
+# mean (absolute) prediction error
+ma2[j]=mean(abs(test[,9]-test.fitls))                
+# mean (squared) prediction error
+ms2[j]=mean((test[,9]-test.fitls)^2)  
+
+fitlsr <- lm( lpsa ~ lcavol+lweight+lbph+svi, data=trainst )
+summary(fitlsr)
+
+# mean prediction error based on reduced model
+test.fitlsr=predict(fitlsr, newdata=testst)  
+# mean (absolute) prediction error
+ma3[j]=mean(abs(test[,9]-test.fitlsr))                
+# mean (squared) prediction error
+ms3[j]=mean((test[,9]-test.fitlsr)^2)    
+
+
+#Fit and find errors for the ridge model
+## use "simple.ridge" in this package
+prostate.ridge <- simple.ridge(trainst[,1:8], trainst[,9], df=seq(1,8,by=0.5) )
+
+
+## use glmnet in package glmnet
+# use 10-fold cross-validation to choose best lambda
+cv.out=cv.glmnet(x=as.matrix(trainst[,1:8]), y=as.numeric(trainst[,9]), nfolds=10, alpha=0, standardize=F)
+
+# the best lambda chosen by 10-fold cross-validation
+lambda.10fold=cv.out$lambda.1s   
+
+# apply Ridge regression with chosen lambda
+fitridge=glmnet(x=as.matrix(trainst[,1:8]),y=as.numeric(trainst[,9]),alpha=0,lambda=lambda.10fold,standardize=F,thresh=1e-12)
+# fitted coefficients
+fitridge$a0   
+fitridge$beta
+
+
+# estimating mean prediction error
+test.ridge=predict(fitridge,newx=as.matrix(testst[,1:8]))
+# mean (absolute) prediction error
+ma4[j]=mean(abs(test[,9]-test.ridge))               
+# mean (squared) prediction errors
+ms4[j]=mean((test[,9]-test.ridge)^2)                 
+# standard error of mean (squared) prediction error
+sd((test[,9]-test.ridge)^2)/sqrt(30)          
+
+
+
+
+## use glmnet in package glmnet
+# use 10-fold cross-validation to choose best lambda
+cv.out=cv.glmnet(x=as.matrix(train[,1:8]), y=as.numeric(train[,9]), nfolds=10, alpha=1)
+# the best lambda chosen by 10-fold cross-validation
+lambda.10fold=cv.out$lambda.1s   
+
+# apply Lasso with chosen lambda
+fitlasso=glmnet(x=as.matrix(trainst[,1:8]),y=as.numeric(trainst[,9]),alpha=1,lambda=lambda.10fold,standardize=F,thresh=1e-12)
+# fitted coefficients
+fitlasso$a0 
+fitlasso$beta
+
+
+# estimating mean prediction error
+test.lasso=predict(fitlasso,newx=as.matrix(testst[,1:8]))
+# mean (absolute) prediction error
+ma5[j]=mean(abs(test[,9]-test.lasso))                
+# mean (squared) prediction error
+ms5[j]=mean((test[,9]-test.lasso)^2)                 
+# standard error of mean (squared) prediction error
+sd((test[,9]-test.lasso)^2)/sqrt(30)          
+
+## Section 3.4.4: LAR
+prostate.lar <- lars(x=as.matrix(trainst[,1:8]), y=as.numeric(trainst[,9]), type="lar", trace=TRUE, normalize=F)
+
+# choose k using 10-fold cross-validation
+cv.out <- cv.lars(x=as.matrix(trainst[,1:8]), y=as.numeric(trainst[,9]), K=10, plot.it=F, type="lar", trace=TRUE, normalize=F)
+itemp=which.min(cv.out$cv) # 6
+k.lars = min(cv.out$index[cv.out$cv < cv.out$cv[itemp]+cv.out$cv.error[itemp]])  # the chosen k = 6
+  
+
+# estimating mean prediction error
+test.lars=predict(prostate.lar, newx=as.matrix(testst[,1:8]), s=k.lars, type="fit", mode=cv.out$mode)$fit
+# mean (absolute) prediction error
+ma6[j]=mean(abs(test[,9]-test.lars))                
+# mean (squared) prediction error
+ms6[j]=mean((test[,9]-test.lars)^2)                 
+# standard error of mean (squared) prediction error
+sd((test[,9]-test.lars)^2)/sqrt(30)   
+  
+}
+
+
+
+
+```
+
+
+Now that we have fit the models with 100 different splits, we can use paired t-tests on the resulting error vectors to determine if the models are giving significantly different results. 
+
+```{r}
+t.test(ma1,ma2, paired=TRUE)
+t.test(ma1,ma3, paired=TRUE)
+t.test(ma1,ma4, paired=TRUE)
+t.test(ma1,ma5, paired=TRUE)
+t.test(ma1,ma6, paired=TRUE)
+
+t.test(ms1,ms2, paired=TRUE)
+t.test(ms1,ms3, paired=TRUE)
+t.test(ms1,ms4, paired=TRUE)
+t.test(ms1,ms5, paired=TRUE)
+t.test(ms1,ms6, paired=TRUE)
+
+```
+
+
+
+The paired t-test indicates that the base error rate is significantly worse than every other model in both absolute and squared error. This isn't surprising since estimating entirely based on the mean should not be expected to work in any but the most basic of circumstances (which certainly doesn't include something as complex as cancer). 
+
+
+
+
+```{r}
+
+t.test(ma2,ma3, paired=TRUE)
+t.test(ma2,ma4, paired=TRUE)
+t.test(ma2,ma5, paired=TRUE)
+t.test(ma2,ma6, paired=TRUE)
+
+```
+
+In absolute error, we see that the full linear model is significantly better than Ridge, LASSO, and LARS, but not distinguishable from the reduced linear model. Does this hold if we look at square error?
+
+```{r}
+
+t.test(ms2,ms3, paired=TRUE)
+t.test(ms2,ms4, paired=TRUE)
+t.test(ms2,ms5, paired=TRUE)
+t.test(ms2,ms6, paired=TRUE)
+
+```
+
+
+The results are not the same for squared errors. Now, we see that the full linear model is better then Ridge, LASSO, and LARS, but worse than the reduced model.
+
+```{r}
+
+t.test(ma3,ma4, paired=TRUE)
+t.test(ma3,ma5, paired=TRUE)
+t.test(ma3,ma6, paired=TRUE)
+
+t.test(ms3,ms4, paired=TRUE)
+t.test(ms3,ms5, paired=TRUE)
+t.test(ms3,ms6, paired=TRUE)
+
+```
+
+
+The results for the reduced linear model are unsurprising given the results for the full model. In both models, it perfomrs better than Ridge, LASSO, and LARS. 
+
+```{r}
+
+t.test(ma4,ma5, paired=TRUE)
+t.test(ma4,ma6, paired=TRUE)
+
+t.test(ms4,ms5, paired=TRUE)
+t.test(ms4,ms6, paired=TRUE)
+
+```
+
+
+In both absolute and squared error, Ridge is indistinguishable from LASSO, but worse than LARS. 
+
+```{r}
+
+t.test(ma5,ma6, paired=TRUE)
+
+
+t.test(ms5,ms6, paired=TRUE)
+```
+
+
+Like Ridge, LASSO performs worse than LARS with regards to both error measures. 
+
+We can see in this example that the shrinkage methods are not performing better the the traditional linear models. However, that is not a reason to discard them. For starters, the is a single toy example and certianly does not reflect the results we would get in general. In addition, successful data mining methods are not entirely based on performance. It is also very useful if the model is interpretable (a major issue with neural networks, for example), which is much easier if we can avoid throwing everything but the kitchen sink into our set of covariates. These shrinkage methods accomplish this by penalizing the use of extra predictors. So, even if we ultimately get the same predictive power, we can achieve it with fewer variables (or with the confidence that they were all neccessary). 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

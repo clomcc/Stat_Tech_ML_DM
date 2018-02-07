@@ -1,0 +1,238 @@
+---
+title: "Statistical Methods for Data Mining Homework 1"
+instructor: Jie Yang
+output: html_document
+author: Cloie McClellan
+---
+
+Question 1 asked us to read chapter 2 of The *Elements of Statistical Learning*, which was an introduction to supervised learning.
+
+Question 2 asks us to repeat (with variations) example 3.2.1 from the textbook which is a study of prostate cancer predictors. Here is the description of the data from page 49:
+
+"The data for this example come from a study by Stamey et al. (1989). They
+examined the correlation between the level of prostate-specific antigen and
+a number of clinical measures in men who were about to receive a radical
+prostatectomy. The variables are log cancer volume (lcavol), log prostate
+weight (lweight), age, log of the amount of benign prostatic hyperplasia
+(lbph), seminal vesicle invasion (svi), log of capsular penetration (lcp),
+Gleason score (gleason), and percent of Gleason scores 4 or 5 (pgg45)."
+
+First, we load the appropriate packages and data:
+```{r}
+library("ElemStatLearn")
+data(prostate)
+str( prostate )
+
+
+```
+
+Next, we create a new split of the data into train and test sets of size 67 and 30 respectively. Once the split is done, we will normalize the sets.
+```{r}
+set.seed(101)  
+sample <- sample.int(n = 97, size = 67, replace = F)
+train <- prostate[sample, ]
+test  <- prostate[-sample, ]
+
+trainst <- train
+for(i in 1:8){
+trainst[,i] <- trainst[,i] - mean(prostate[,i]);
+trainst[,i] <- trainst[,i]/sd(prostate[,i]);
+}
+
+testst<- test
+for(i in 1:8){
+testst[,i] <- testst[,i] - mean(prostate[,i]);
+testst[,i] <- testst[,i]/sd(prostate[,i]);
+}
+```
+
+
+
+
+
+
+
+```{r}
+# check correlations
+cor( prostate[,1:8] )
+# reproduce Table 3.1 on page 50
+round(cor( train[,1:8] ),3)
+
+# scatter plot, reproducing Figure 1.1 on page 3
+pairs( prostate[,1:9], col="violet" )
+```
+
+
+
+
+
+
+Now that we have split the data, we first want to find the base error rate. So, we find the mean lpsa value for the train set, and then find the errors given if we simply use this as our prediction for all values. 
+
+```{r}
+
+mean(trainst[,9])     
+#mean (absolute) prediction error
+mean(abs(testst[,9]-mean(trainst[,9])))  
+#mean (squared) prediction error
+mean((testst[,9]-mean(trainst[,9]))^2)   
+# standard error of mean (squared) prediction error
+sd((testst[,9]-mean(trainst[,9]))^2)/sqrt(30) 
+
+```
+
+So, the base error rate is 1.7. 
+
+Next, we want to fit the whole model to see how it compares:
+```{r}
+fitls <- lm( lpsa ~ lcavol+lweight+age+lbph+svi+lcp+gleason+pgg45, data=trainst )
+summary(fitls)
+
+test.fitls=predict(fitls, newdata=testst)  
+# mean (absolute) prediction error
+mean(abs(test[,9]-test.fitls))                
+# mean (squared) prediction error
+mean((test[,9]-test.fitls)^2)                 
+# standard error of mean (squared) prediction error
+sd((test[,9]-test.fitls)^2)/sqrt(30)          
+
+```
+
+
+Next, we fit a reduced model keeping only the variables that appear to be significant:
+```{r}
+fitlsr <- lm( lpsa ~ lcavol+lweight+lbph+svi, data=trainst )
+summary(fitlsr)
+
+# mean prediction error based on reduced model
+test.fitlsr=predict(fitlsr, newdata=testst)  
+# mean (absolute) prediction error
+mean(abs(test[,9]-test.fitlsr))                
+# mean (squared) prediction error
+mean((test[,9]-test.fitlsr)^2)                 
+# standard error of mean (squared) prediction error
+sd((test[,9]-test.fitlsr)^2)/sqrt(30)          
+
+```
+
+
+The reduced model appears to improve the results. However, we can't base our analysis purely on this. Instead, we need to look at the F-statistic to decide if we have enough evidence that the coefficience on the removed variables are really zero. 
+
+
+
+```{r}
+RSSfull<-(.6079)^2*58
+RSSred<-(.6286)^2*62
+Fstat<-((RSSred-RSSfull)/4)/(RSSfull/58)
+
+Fstat
+```
+
+From this F-statistic, we get a p-value of .0961 which may or may not be significant depending on the alpha we want to choose. We can see the importance of comparing different train/test splits from this result because it is different than the original split. So, to get a full picture, we want to run the procedure multiple times and compare the results. In this case, multiple will mean 100. 
+
+
+
+
+```{r}
+set.seed(102)
+bsea=c()
+bses=c()
+flsea=c()
+flses=c()
+rlsea=c()
+rlses=c()
+
+for(j in 1:100){
+sample <- sample.int(n = 97, size = 67, replace = F)
+train <- prostate[sample, ]
+test  <- prostate[-sample, ]
+
+trainst <- train
+for(i in 1:8){
+trainst[,i] <- trainst[,i] - mean(prostate[,i]);
+trainst[,i] <- trainst[,i]/sd(prostate[,i]);
+}
+
+testst<- test
+for(i in 1:8){
+testst[,i] <- testst[,i] - mean(prostate[,i]);
+testst[,i] <- testst[,i]/sd(prostate[,i]);
+}
+
+mean(trainst[,9])     
+#mean (absolute) prediction error
+bsea[j]=mean(abs(testst[,9]-mean(trainst[,9])))  
+#mean (squared) prediction error
+bses[j]=mean((testst[,9]-mean(trainst[,9]))^2)  
+
+fitls <- lm( lpsa ~ lcavol+lweight+age+lbph+svi+lcp+gleason+pgg45, data=trainst )
+summary(fitls)
+
+test.fitls=predict(fitls, newdata=testst)  
+# mean (absolute) prediction error
+flsea[j]=mean(abs(test[,9]-test.fitls))                
+# mean (squared) prediction error
+flses[j]=mean((test[,9]-test.fitls)^2)  
+
+fitlsr <- lm( lpsa ~ lcavol+lweight+lbph+svi, data=trainst )
+summary(fitlsr)
+
+# mean prediction error based on reduced model
+test.fitlsr=predict(fitlsr, newdata=testst)  
+# mean (absolute) prediction error
+rlsea[j]=mean(abs(test[,9]-test.fitlsr))                
+# mean (squared) prediction error
+rlses[j]=mean((test[,9]-test.fitlsr)^2)    
+  
+}
+
+mean(bsea)
+mean(bses)
+mean(flsea)
+mean(flses)
+mean(rlsea)
+mean(rlses)
+
+diff=c()
+diff=rlses-flses
+
+
+```
+
+
+```{r}
+t.test(rlses,flses, paired = TRUE)
+```
+
+
+
+So, the paired t-test indicates that, at 95% confidence, there is a difference in the mean for the reduced model and for the full model. This makes a good case that the reduced model is in fact the better. Considering this test based on numerous train/test splits avoids the bias that may be present in one particular choice. 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
